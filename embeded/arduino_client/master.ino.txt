@@ -1,0 +1,493 @@
+#include <EEPROM.h>
+#include <MsTimer2.h>
+//////////////////////////////////////Wire
+#include <Wire.h>
+#define SLAVE1 4
+#define SLAVE2 5
+//////////////////////////////////////Wire
+//////////////////////////////////////Ultra 
+#define CM 1 //Centimeter
+#define INC 0 //Inch
+#define TP 48 //Trig_pin
+#define EP 49 //Echo_pin
+//////////////////////////////////////Ultra
+///////////////////////////////////// RELAY
+#define RELAY1 (int)10
+#define RELAY2 (int)11
+#define RELAY3 (int)12
+#define RELAY4 (int)13
+///////////////////////////////////// RELAY
+///////////////////////////////////// VIBRATION
+#define VIBRATION 3
+///////////////////////////////////// VIBRATION
+///////////////////////////////////// GAS
+#define Gas_Sensor A0
+///////////////////////////////////// GAS
+///////////////////////////////////// Water
+#define Water_Sensor 8
+///////////////////////////////////// Water
+//////////////////////////////////////Temp_Humi
+#include "DHT.h"
+int pin_SIGNAL = 4;
+DHT dht(pin_SIGNAL, DHT11);
+//////////////////////////////////////Temp_Humi
+/////////////////////////////////////FLAG
+int led1Flag = 0;
+int led2Flag = 0;
+int led3Flag = 0;
+int led4Flag = 0;
+int gasFlag = 0;
+int ultraFlag = 0;
+int waterFlag = 0;
+int vibrationFlag = 0;
+int temp = 0;
+int humi = 0;
+int waterServe = 0;
+int waterCount = 0;
+int nfcFlag=0;
+/////////////////////////////////////fLAG
+/////////////////////////////////////Bluetooth
+byte buffer[1024];
+int bufferPosition;
+/////////////////////////////////////Bluetooth
+/////////////////////////////////////SendData
+byte sendBuffer[14];
+int count=0; 
+/////////////////////////////////////SendData
+void setup() {
+  
+  initBuffer();
+  
+  //////////////////////////////////////Wire
+  Wire.begin(); 
+  //////////////////////////////////////Wire
+  //////////////////////////////////////Ultra
+  pinMode(TP,OUTPUT); // set TP output for trigger
+  pinMode(EP,INPUT); // set EP input for echo
+  //////////////////////////////////////Ultra
+  ///////////////////////////////////// RELAY
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(RELAY3, OUTPUT);
+  pinMode(RELAY4, OUTPUT);
+  ///////////////////////////////////// RELAY
+  
+  Serial1.begin(38400);
+  Serial.begin(38400);
+  ///////////////////////////////////// BlueTooth
+    bufferPosition=0;
+  ///////////////////////////////////// BlueTooth    
+  //////////////////////////////////////Water   
+   pinMode(Water_Sensor, INPUT); 
+  //////////////////////////////////////Water
+  ///////////////////////////////////// VIBRATION
+  pinMode(VIBRATION, INPUT);
+  ///////////////////////////////////// VIBRATION
+}
+ 
+void loop() {
+ sendDataToSlave(); //master -> slave (sendbuffer)
+ androidCommunication(); //android -> master(led), master -> android(sendbuffer)
+ getDataFromSlave1(); // slave -> master (nfc)
+ ultraloop();
+ waterloop();
+ tempHumiloop();
+ gasloop();
+ vibrationloop();
+ count++;
+}
+void tempHumiloop(){
+  humi = (int) dht.readHumidity();
+  temp = (int) dht.readTemperature();
+  Serial.print("Humidity: ");
+  Serial.print(humi);
+  Serial.print(" %\t");
+  Serial.print("Temperature: ");
+  Serial.print(temp);
+  Serial.println(" [C] ");
+  char tempbuf[3]; char humibuf[3];
+  char buffer[50];
+  if(temp % 10 == 0 ){ 
+    tempbuf[0]='0';
+    sprintf(tempbuf+1, "%d", temp);
+  }
+  else sprintf(tempbuf, "%d", temp);
+  
+  if(humi % 10 == 0 ){ 
+    humibuf[0]='0';
+    sprintf(humibuf+1, "%d", humi);
+  }
+  else sprintf(humibuf, "%d", humi);
+    
+  sendBuffer[8]= (byte) tempbuf[0];
+  sendBuffer[9]= (byte) tempbuf[1];
+  sendBuffer[10]= (byte) humibuf[0];
+  sendBuffer[11]= (byte) humibuf[1];
+}
+void waterloop(){
+   if(digitalRead(Water_Sensor) == LOW) { waterFlag=0;}
+   else { waterFlag=1; }
+   
+   if(waterFlag == 1 ) waterServe = 1;
+   if(waterServe == 1 && waterCount< 100) { waterFlag = 1; waterCount++; }
+   else { waterServe =0; waterCount =0; waterFlag = 0; }
+   
+   char p[3];
+   sprintf(p,"%d",waterServe);
+   sendBuffer[6] = (byte)p[0];
+  Serial.print("WATER : ");  
+  Serial.println(waterFlag);
+}  
+void gasloop(){
+  if(analogRead(Gas_Sensor) > 120){ gasFlag = 1; sendBuffer[4]='1'; }
+  else { gasFlag = 0; sendBuffer[4]='0'; }
+  
+  Serial.print("GAS Sensor : ");
+  Serial.print(analogRead(Gas_Sensor));  
+  Serial.print("  GAS Flag : ");
+  Serial.println(gasFlag);
+}
+ 
+void vibrationloop(){
+  if(digitalRead(VIBRATION)){  Serial.println("VIBRATION O");  vibrationFlag = 1; sendBuffer[7]='1'; }
+  else { Serial.println("VIBRATION X"); vibrationFlag = 0; sendBuffer[7]='0'; }
+}
+void androidCommunication(){
+  if(Serial1.available()){
+    byte data=Serial1.read();
+    Serial.write(data);
+    buffer[bufferPosition++]=data;
+    
+    if(data=='\n'){
+      buffer[bufferPosition]='\0';
+      light(((byte)buffer[0]),RELAY1);
+      light(((byte)buffer[1]),RELAY2);
+      light(((byte)buffer[2]),RELAY3);
+      light(((byte)buffer[3]),RELAY4);
+      
+      Serial.print("Ecko Back :");
+      Serial.write(buffer,bufferPosition);
+      bufferPosition=0;
+      sendBuffer[12]='\n';
+      sendBuffer[13]='\n';
+      
+      Serial1.write(sendBuffer, 13);
+    }
+  }
+}
+ 
+void light(byte target,int relay){  //led control
+  if(target == '1'){ digitalWrite(relay, HIGH); sendBuffer[relay-10]='1'; }
+  else { digitalWrite(relay, LOW); sendBuffer[relay-10]='0'; }
+}
+void initBuffer(){
+  for(int i=0;i<13;i++){
+    sendBuffer[i]='0';
+  }
+}
+void sendDataToSlave(){  
+  if(count==10){ 
+    Wire.beginTransmission(SLAVE1);
+    Wire.write(sendBuffer,14);
+    Wire.endTransmission(SLAVE1);
+
+    Wire.beginTransmission(SLAVE2);
+    Wire.write(sendBuffer,14);
+    Wire.endTransmission(SLAVE2);
+
+    
+    count=0;
+  }
+}
+//////////////////////////////////////WIRE
+void getDataFromSlave1() {
+  Wire.requestFrom(SLAVE1, 4);
+  
+  nfcFlag = Wire.read(); 
+  if(nfcFlag==1) sendBuffer[12]='1';
+  else sendBuffer[12]='0';
+  
+  Serial.print("NFC ");
+  Serial.println(nfcFlag); 
+}
+//////////////////////////////////////WIRE
+//////////////////////////////////////Ultra
+void ultraloop(){
+  long microseconds = TP_init();
+  long distacne_cm = Distance(microseconds, CM);
+  Serial.print("ULTRA(int) = ");
+  Serial.println(distacne_cm);
+  
+  if(nfcFlag==1 && distacne_cm<11){ //alarm (not home, detection)
+      Serial.println("XXXXXXXXXX instruder XXXXXXXXXX"); //Android -> alarm
+      ultraFlag = 1;
+      sendBuffer[5]='1';
+  }
+  else { ultraFlag = 0; sendBuffer[5]='0'; }
+}
+ 
+long Distance(long time, int flag) {
+  long distacne;
+  if(flag) distacne = time /29 / 2 ;
+  else distacne = time / 74 / 2; // INC
+  return distacne;
+}
+long TP_init(){
+  digitalWrite(TP, LOW);
+  delayMicroseconds(2);
+  // pull the Trig pin to high level for more than 10us impulse
+  digitalWrite(TP, HIGH); delayMicroseconds(10); digitalWrite(TP, LOW);
+  // waits for the pin to go HIGH, and returns the length of the pulse
+  // in microseconds
+  long microseconds = pulseIn(EP,HIGH);
+  // return microseconds
+  return microseconds;
+} 
+//////////////////////////////////////Ultra  
+ 
+#include <EEPROM.h>
+#include <MsTimer2.h>
+//////////////////////////////////////Wire
+#include <Wire.h>
+#define SLAVE1 4
+#define SLAVE2 5
+//////////////////////////////////////Wire
+//////////////////////////////////////Ultra 
+#define CM 1 //Centimeter
+#define INC 0 //Inch
+#define TP 48 //Trig_pin
+#define EP 49 //Echo_pin
+//////////////////////////////////////Ultra
+///////////////////////////////////// RELAY
+#define RELAY1 (int)10
+#define RELAY2 (int)11
+#define RELAY3 (int)12
+#define RELAY4 (int)13
+///////////////////////////////////// RELAY
+///////////////////////////////////// VIBRATION
+#define VIBRATION 3
+///////////////////////////////////// VIBRATION
+///////////////////////////////////// GAS
+#define Gas_Sensor A0
+///////////////////////////////////// GAS
+///////////////////////////////////// Water
+#define Water_Sensor 8
+///////////////////////////////////// Water
+//////////////////////////////////////Temp_Humi
+#include "DHT.h"
+int pin_SIGNAL = 4;
+DHT dht(pin_SIGNAL, DHT11);
+//////////////////////////////////////Temp_Humi
+/////////////////////////////////////FLAG
+int led1Flag = 0;
+int led2Flag = 0;
+int led3Flag = 0;
+int led4Flag = 0;
+int gasFlag = 0;
+int ultraFlag = 0;
+int waterFlag = 0;
+int vibrationFlag = 0;
+int temp = 0;
+int humi = 0;
+int waterServe = 0;
+int waterCount = 0;
+int nfcFlag=0;
+/////////////////////////////////////fLAG
+/////////////////////////////////////Bluetooth
+byte buffer[1024];
+int bufferPosition;
+/////////////////////////////////////Bluetooth
+/////////////////////////////////////SendData
+byte sendBuffer[14];
+int count=0; 
+/////////////////////////////////////SendData
+void setup() {
+  
+  initBuffer();
+  
+  //////////////////////////////////////Wire
+  Wire.begin(); 
+  //////////////////////////////////////Wire
+  //////////////////////////////////////Ultra
+  pinMode(TP,OUTPUT); // set TP output for trigger
+  pinMode(EP,INPUT); // set EP input for echo
+  //////////////////////////////////////Ultra
+  ///////////////////////////////////// RELAY
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(RELAY3, OUTPUT);
+  pinMode(RELAY4, OUTPUT);
+  ///////////////////////////////////// RELAY
+  
+  Serial1.begin(38400);
+  Serial.begin(38400);
+  ///////////////////////////////////// BlueTooth
+    bufferPosition=0;
+  ///////////////////////////////////// BlueTooth    
+  //////////////////////////////////////Water   
+   pinMode(Water_Sensor, INPUT); 
+  //////////////////////////////////////Water
+  ///////////////////////////////////// VIBRATION
+  pinMode(VIBRATION, INPUT);
+  ///////////////////////////////////// VIBRATION
+}
+ 
+void loop() {
+ sendDataToSlave(); //master -> slave (sendbuffer)
+ androidCommunication(); //android -> master(led), master -> android(sendbuffer)
+ getDataFromSlave1(); // slave -> master (nfc)
+ ultraloop();
+ waterloop();
+ tempHumiloop();
+ gasloop();
+ vibrationloop();
+ count++;
+}
+void tempHumiloop(){
+  humi = (int) dht.readHumidity();
+  temp = (int) dht.readTemperature();
+  Serial.print("Humidity: ");
+  Serial.print(humi);
+  Serial.print(" %\t");
+  Serial.print("Temperature: ");
+  Serial.print(temp);
+  Serial.println(" [C] ");
+  char tempbuf[3]; char humibuf[3];
+  char buffer[50];
+  if(temp % 10 == 0 ){ 
+    tempbuf[0]='0';
+    sprintf(tempbuf+1, "%d", temp);
+  }
+  else sprintf(tempbuf, "%d", temp);
+  
+  if(humi % 10 == 0 ){ 
+    humibuf[0]='0';
+    sprintf(humibuf+1, "%d", humi);
+  }
+  else sprintf(humibuf, "%d", humi);
+    
+  sendBuffer[8]= (byte) tempbuf[0];
+  sendBuffer[9]= (byte) tempbuf[1];
+  sendBuffer[10]= (byte) humibuf[0];
+  sendBuffer[11]= (byte) humibuf[1];
+}
+void waterloop(){
+   if(digitalRead(Water_Sensor) == LOW) { waterFlag=0;}
+   else { waterFlag=1; }
+   
+   if(waterFlag == 1 ) waterServe = 1;
+   if(waterServe == 1 && waterCount< 100) { waterFlag = 1; waterCount++; }
+   else { waterServe =0; waterCount =0; waterFlag = 0; }
+   
+   char p[3];
+   sprintf(p,"%d",waterServe);
+   sendBuffer[6] = (byte)p[0];
+  Serial.print("WATER : ");  
+  Serial.println(waterFlag);
+}  
+void gasloop(){
+  if(analogRead(Gas_Sensor) > 120){ gasFlag = 1; sendBuffer[4]='1'; }
+  else { gasFlag = 0; sendBuffer[4]='0'; }
+  
+  Serial.print("GAS Sensor : ");
+  Serial.print(analogRead(Gas_Sensor));  
+  Serial.print("  GAS Flag : ");
+  Serial.println(gasFlag);
+}
+ 
+void vibrationloop(){
+  if(digitalRead(VIBRATION)){  Serial.println("VIBRATION O");  vibrationFlag = 1; sendBuffer[7]='1'; }
+  else { Serial.println("VIBRATION X"); vibrationFlag = 0; sendBuffer[7]='0'; }
+}
+void androidCommunication(){
+  if(Serial1.available()){
+    byte data=Serial1.read();
+    Serial.write(data);
+    buffer[bufferPosition++]=data;
+    
+    if(data=='\n'){
+      buffer[bufferPosition]='\0';
+      light(((byte)buffer[0]),RELAY1);
+      light(((byte)buffer[1]),RELAY2);
+      light(((byte)buffer[2]),RELAY3);
+      light(((byte)buffer[3]),RELAY4);
+      
+      Serial.print("Ecko Back :");
+      Serial.write(buffer,bufferPosition);
+      bufferPosition=0;
+      sendBuffer[12]='\n';
+      sendBuffer[13]='\n';
+      
+      Serial1.write(sendBuffer, 13);
+    }
+  }
+}
+ 
+void light(byte target,int relay){  //led control
+  if(target == '1'){ digitalWrite(relay, HIGH); sendBuffer[relay-10]='1'; }
+  else { digitalWrite(relay, LOW); sendBuffer[relay-10]='0'; }
+}
+void initBuffer(){
+  for(int i=0;i<13;i++){
+    sendBuffer[i]='0';
+  }
+}
+void sendDataToSlave(){  
+  if(count==10){ 
+    Wire.beginTransmission(SLAVE1);
+    Wire.write(sendBuffer,14);
+    Wire.endTransmission(SLAVE1);
+
+    Wire.beginTransmission(SLAVE2);
+    Wire.write(sendBuffer,14);
+    Wire.endTransmission(SLAVE2);
+
+    
+    count=0;
+  }
+}
+//////////////////////////////////////WIRE
+void getDataFromSlave1() {
+  Wire.requestFrom(SLAVE1, 4);
+  
+  nfcFlag = Wire.read(); 
+  if(nfcFlag==1) sendBuffer[12]='1';
+  else sendBuffer[12]='0';
+  
+  Serial.print("NFC ");
+  Serial.println(nfcFlag); 
+}
+//////////////////////////////////////WIRE
+//////////////////////////////////////Ultra
+void ultraloop(){
+  long microseconds = TP_init();
+  long distacne_cm = Distance(microseconds, CM);
+  Serial.print("ULTRA(int) = ");
+  Serial.println(distacne_cm);
+  
+  if(nfcFlag==1 && distacne_cm<11){ //alarm (not home, detection)
+      Serial.println("XXXXXXXXXX instruder XXXXXXXXXX"); //Android -> alarm
+      ultraFlag = 1;
+      sendBuffer[5]='1';
+  }
+  else { ultraFlag = 0; sendBuffer[5]='0'; }
+}
+ 
+long Distance(long time, int flag) {
+  long distacne;
+  if(flag) distacne = time /29 / 2 ;
+  else distacne = time / 74 / 2; // INC
+  return distacne;
+}
+long TP_init(){
+  digitalWrite(TP, LOW);
+  delayMicroseconds(2);
+  // pull the Trig pin to high level for more than 10us impulse
+  digitalWrite(TP, HIGH); delayMicroseconds(10); digitalWrite(TP, LOW);
+  // waits for the pin to go HIGH, and returns the length of the pulse
+  // in microseconds
+  long microseconds = pulseIn(EP,HIGH);
+  // return microseconds
+  return microseconds;
+} 
+//////////////////////////////////////Ultra

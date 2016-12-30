@@ -1,0 +1,60 @@
+#include <Wire.h>
+#define SLAVE 4
+///////////////////////////////////////NFC
+#include <PN532.h>
+#define SCK 13
+#define MOSI 11
+#define SS 10
+#define MISO 12
+PN532 nfc(SCK, MISO, MOSI, SS);
+///////////////////////////////////////NFC
+int nfcFlag = 0;
+byte buf[13];
+ 
+void setup() {
+  Wire.begin(SLAVE);
+  Wire.onRequest(sendToMaster);
+  Wire.onReceive(receiveFromMaster);
+  
+  ///////////////////////////////////////NFC
+Serial.begin(115200);
+nfc.begin();
+uint32_t versiondata = nfc.getFirmwareVersion();
+if (! versiondata) {
+Serial.print("Didn't find PN53x board");
+while (1); // halt
+}
+nfc.SAMConfig();
+ 
+}
+void loop () {
+uint32_t id;
+// look for MiFare type cards
+id = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A);
+if (id != 0)
+{
+    nfcFlag = (nfcFlag+1)%2;
+    Serial.println (id);
+}
+ 
+delay (500);
+}
+ 
+void sendToMaster() {
+  Wire.write(nfcFlag); // 카운터 값을 증가시키고 마스터로 전송
+}
+ 
+void receiveFromMaster(int bytes){
+ for(int i=0; i<bytes; i++){
+//  char ch = Wire.read();
+  byte t = (byte)(Wire.read());
+  Serial.write(t);
+  buf[i] = t;
+ } 
+ 
+ Serial.write("test:");
+ for (int j=0;j<13;j++){
+   Serial.write(buf[j]);
+ }
+ Serial.println("");
+}
